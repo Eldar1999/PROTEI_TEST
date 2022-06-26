@@ -18,7 +18,7 @@ int check(int exp, const std::string &msg) {
     return exp;
 }
 
-int raise_server(sockaddr_in &sa, int backLog) {
+int raiseTCPServer(sockaddr_in &sa, int backLog) {
     int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     check(s, "Socket error");
 
@@ -34,7 +34,19 @@ int raise_server(sockaddr_in &sa, int backLog) {
     return s;
 }
 
-int raise_client(sockaddr_in &sa, int backLog) {
+int raiseUDPServer(sockaddr_in &sa, int backLog) {
+    int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    check(s, "Socket error");
+
+    if (check(bind(s, (struct sockaddr *) &sa, sizeof sa), "Bind error") == -1) {
+        close(s);
+        return -1;
+    }
+
+    return s;
+}
+
+int raiseTCPClient(sockaddr_in &sa, int backLog) {
     int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     check(s, "Socket error");
     if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
@@ -44,8 +56,14 @@ int raise_client(sockaddr_in &sa, int backLog) {
     return s;
 }
 
-int acceptConnection(int sock) {
-    return 0;
+int raiseUDPClient(sockaddr_in &sa, int backLog) {
+    int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    check(s, "Socket error");
+    if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
+        close(s);
+        return -1;
+    }
+    return s;
 }
 
 int send(int fd, void *buff, int N) {
@@ -55,7 +73,6 @@ int send(int fd, void *buff, int N) {
     while (retry) {
         retry = false;
         ssize_t bytes_sent = send(fd, buff, N, MSG_NOSIGNAL);
-        /**/
         if ((bytes_sent < 0 || bytes_sent < N) && retry_count <= 1000) {
             retry_count += 1;
             retry = true;
@@ -64,20 +81,21 @@ int send(int fd, void *buff, int N) {
             return EXIT_FAILURE;
         } else {
             retry_count = 0;
-            std::cout << bytes_sent << " bytes sent." << std::endl;
+            // std::cout << bytes_sent << " bytes sent." << std::endl;
         }
     }
     return EXIT_SUCCESS;
 }
 
-std::string getMessage(int fd) {
+std::string getMessage(int fd, sockaddr_in *sa) {
     std::string res;
     ssize_t offset = 0;
     res.resize(1024);
     bool tryToRead = true;
     int tmp = 0;
+    socklen_t s = sizeof(*sa);
     while (tryToRead) {
-        tmp = recv(fd, &res[offset], 1024, 0);
+        tmp = recvfrom(fd, &res[offset], 1024, 0, (sockaddr *) sa, &s);
         if (tmp < 0) {
             perror("Read failure");
             exit(EXIT_FAILURE);
@@ -88,7 +106,8 @@ std::string getMessage(int fd) {
             offset += 1024;
         }
     }
-    res.resize(tmp);
+    //std::cout << res.length() << std::endl;
+    res.resize(offset + (tmp > 1 ? tmp - 1 : 1));
     return res;
 }
 
@@ -102,7 +121,7 @@ std::vector<int> getNums(const std::string &str) {
                 tmp = 0;
             }
             tmp = tmp * 10 + int(i) - '0';
-            std::cout << i << " = " << tmp << std::endl;
+            // std::cout << i << " = " << tmp << std::endl;
         } else {
             if (tmp != -1) {
                 res.push_back(tmp);
