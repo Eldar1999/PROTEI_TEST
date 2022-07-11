@@ -25,17 +25,18 @@ int main(int argc, char **argv) {
     std::cout << "OK" << std::endl;
 
     while (true) {
-        std::string message;
-        std::string answer;
+        Message message;
+        Message answer;
         std::cout << "Enter your message or write 'exit' to exit: ";
         fflush(stdout);
-        getline(std::cin, message);
-        send(s, (void *) message.c_str(), message.length() + 2);
-        if (message == "exit") {
+        getline(std::cin, message.message);
+        message.length = message.message.length() + sizeof(unsigned long);
+        sendMessage(s, message);
+        if (message.message == "exit") {
             break;
         }
         answer = getMessage(s, &sa);
-        std::cout << "Answer: " << answer.c_str() << std::endl;
+        std::cout <<  "Answer: "<< answer << std::endl;
     }
     std::cout << "Socket closing...";
     if (check(close(s), "Socket closing error!") == -1) {

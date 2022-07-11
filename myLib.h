@@ -10,6 +10,30 @@
 #include <cstring>
 #include <vector>
 #include <bits/stdc++.h>
+#include <csignal>
+#include <cstdlib>
+#include <cstdio>
+#include <unistd.h>
+
+struct Message {
+    unsigned long length;
+    std::string message;
+
+    friend std::ostream &operator<<(std::ostream &os, Message &m);
+
+    friend std::istream &operator>>(std::istream &is, Message &m);
+};
+
+std::ostream &operator<<(std::ostream &os, Message &m) {
+    os << m.message;
+    return os;
+}
+
+std::istream &operator>>(std::istream &is, Message &m) {
+    is >> m.message;
+    m.length = m.message.size() + sizeof(unsigned long);
+    return is;
+}
 
 int check(int exp, const std::string &msg) {
     if (exp == -1) {
@@ -19,6 +43,7 @@ int check(int exp, const std::string &msg) {
 }
 
 int raiseTCPServer(sockaddr_in &sa, int backLog) {
+    std::cout << "TCP server startup" << std::endl;
     int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     check(s, "Socket error");
 
@@ -35,6 +60,7 @@ int raiseTCPServer(sockaddr_in &sa, int backLog) {
 }
 
 int raiseUDPServer(sockaddr_in &sa, int backLog) {
+    std::cout << "UDP server startup" << std::endl;
     int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     check(s, "Socket error");
 
@@ -47,6 +73,7 @@ int raiseUDPServer(sockaddr_in &sa, int backLog) {
 }
 
 int raiseTCPClient(sockaddr_in &sa, int backLog) {
+    std::cout << "TCP client startup" << std::endl;
     int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     check(s, "Socket error");
     if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
@@ -57,6 +84,7 @@ int raiseTCPClient(sockaddr_in &sa, int backLog) {
 }
 
 int raiseUDPClient(sockaddr_in &sa, int backLog) {
+    std::cout << "UDP client startup" << std::endl;
     int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     check(s, "Socket error");
     if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
@@ -66,56 +94,42 @@ int raiseUDPClient(sockaddr_in &sa, int backLog) {
     return s;
 }
 
-int send(int fd, void *buff, int N) {
-    bool retry = true;
-    int retry_count = 0;
-
-    while (retry) {
-        retry = false;
-        ssize_t bytes_sent = send(fd, buff, N, MSG_NOSIGNAL);
-        if ((bytes_sent < 0 || bytes_sent < N) && retry_count <= 1000) {
-            retry_count += 1;
-            retry = true;
-        } else if (bytes_sent < 0 && retry_count > 1000) {
-            perror("Error sending packet");
-            return EXIT_FAILURE;
-        } else {
-            retry_count = 0;
-            // std::cout << bytes_sent << " bytes sent." << std::endl;
-        }
+int sendMessage(int fd, Message &msg) {
+    ssize_t bytes_sent = sendto(fd, &msg.length, sizeof(unsigned long), MSG_NOSIGNAL, (struct sockaddr*) &sa, sizeof sa);
+    while (bytes_sent < msg.length) {
+        bytes_sent += send(fd, msg.message.c_str(), msg.length - sizeof(unsigned long), MSG_NOSIGNAL);
     }
+    //perror("Error sending packet");
+    //return EXIT_FAILURE;
+    //retry_count = 0;
+    // std::cout << bytes_sent << " bytes sent." << std::endl;
+
     return EXIT_SUCCESS;
 }
 
-std::string getMessage(int fd, sockaddr_in *sa) {
-    std::string res;
-    ssize_t offset = 0;
-    res.resize(1024);
-    bool tryToRead = true;
-    int tmp = 0;
+Message getMessage(int fd, sockaddr_in *sa) {
     socklen_t s = sizeof(*sa);
-    while (tryToRead) {
-        tmp = recvfrom(fd, &res[offset], 1024, 0, (sockaddr *) sa, &s);
+    Message res{};
+    recvfrom(fd, &res.length, sizeof(unsigned long), 0, (sockaddr *) sa, &s);
+    ssize_t tmp = sizeof(unsigned long);
+    res.message.resize(res.length >= tmp ? res.length - tmp : 0);
+
+    while (tmp < res.length) {
+        tmp += recvfrom(fd, &res.message[0], res.length - tmp, 0, (sockaddr *) sa, &s);
         if (tmp < 0) {
             perror("Read failure");
             exit(EXIT_FAILURE);
-        } else if (tmp == 0 || res[tmp] == 0) {
-            tryToRead = false;
-        } else {
-            res.resize(res.size() + 1024);
-            offset += 1024;
         }
     }
     //std::cout << res.length() << std::endl;
-    res.resize(offset + (tmp > 1 ? tmp - 1 : 1));
     return res;
 }
 
-std::vector<int> getNums(const std::string &str) {
+std::vector<int> getNums(const Message &message) {
     std::vector<int> res;
     int sum = 0;
     int tmp = -1;
-    for (char i: str) {
+    for (char i: message.message) {
         if (i >= '0' && i <= '9') {
             if (tmp == -1) {
                 tmp = 0;
@@ -130,6 +144,11 @@ std::vector<int> getNums(const std::string &str) {
             }
         }
     }
+    if (tmp != -1) {
+        res.push_back(tmp);
+        sum += tmp;
+        tmp = -1;
+    }
     std::sort(res.begin(), res.end());
     if (!res.empty()) {
         res.push_back(sum);
@@ -138,7 +157,7 @@ std::vector<int> getNums(const std::string &str) {
 }
 
 std::string processNums(std::vector<int> vec) {
-    std::string res = "";
+    std::string res;
     if (vec.empty()) {
         return "";
     } else {
