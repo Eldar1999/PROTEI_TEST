@@ -95,7 +95,7 @@ int raiseUDPClient(sockaddr_in &sa, int backLog) {
 }
 
 int sendMessage(int fd, Message &msg) {
-    ssize_t bytes_sent = sendto(fd, &msg.length, sizeof(unsigned long), MSG_NOSIGNAL, (struct sockaddr*) &sa, sizeof sa);
+    ssize_t bytes_sent = send(fd, &msg.length, sizeof(unsigned long), MSG_NOSIGNAL);
     while (bytes_sent < msg.length) {
         bytes_sent += send(fd, msg.message.c_str(), msg.length - sizeof(unsigned long), MSG_NOSIGNAL);
     }

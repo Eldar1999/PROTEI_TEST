@@ -85,10 +85,12 @@ int main() {
                     std::cout << nums.size() << std::endl;
                     if (!nums.empty()) {
                         message.message = processNums(nums);
-                        message.length = message.message.length();
+                        message.length = message.message.length() + sizeof(unsigned long);
                         std::cout << message << std::endl;
                     }
-                    sendto(i, &message, message.length, 0, (sockaddr *) &saUDP, sizeof saUDP);
+                    sendto(i, &message.length, sizeof(unsigned long), 0, (sockaddr *) &saUDP, sizeof saUDP);\
+                    sendto(i, message.message.c_str(), message.length - sizeof(unsigned long), 0, (sockaddr *) &saUDP,
+                           sizeof saUDP);
                 } else {
                     std::cout << "Get message...";
                     fflush(stdout);
