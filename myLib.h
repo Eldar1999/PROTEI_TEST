@@ -14,26 +14,45 @@
 #include <cstdlib>
 #include <cstdio>
 #include <unistd.h>
+#include <cerrno>
+
+typedef unsigned short msg_len_type;
 
 struct Message {
-    unsigned long length;
-    std::string message;
+    char *message;
+
+    Message() {
+        this->message = new char[0xffff];
+    }
+
+    ~Message() {
+        delete[] this->message;
+    }
 
     friend std::ostream &operator<<(std::ostream &os, Message &m);
 
-    friend std::istream &operator>>(std::istream &is, Message &m);
+//    friend std::istream &operator>>(std::istream &is, Message &m);
+
+    Message &operator=(const Message &right) {
+
+        if (this == &right) {
+            return *this;
+        }
+        memcpy(this->message, right.message, 0xffff);
+        return *this;
+    }
 };
 
 std::ostream &operator<<(std::ostream &os, Message &m) {
-    os << m.message;
+    os << (char *) (m.message + sizeof(msg_len_type));
     return os;
 }
 
-std::istream &operator>>(std::istream &is, Message &m) {
-    is >> m.message;
-    m.length = m.message.size() + sizeof(unsigned long);
-    return is;
-}
+//std::istream &operator>>(std::istream &is, Message &m) {
+//    is >> m.message;
+//    m.length = strlen(m.message) + sizeof(unsigned long);
+//    return is;
+//}
 
 int check(int exp, const std::string &msg) {
     if (exp == -1) {
@@ -42,99 +61,141 @@ int check(int exp, const std::string &msg) {
     return exp;
 }
 
-int raiseTCPServer(sockaddr_in &sa, int backLog) {
-    std::cout << "TCP server startup" << std::endl;
-    int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    check(s, "Socket error");
+namespace tcp {
 
-    if (check(bind(s, (struct sockaddr *) &sa, sizeof sa), "Bind error") == -1) {
-        close(s);
-        return -1;
-    }
+    int raise_server(sockaddr_in &sa, int backLog) {
+        std::cout << "TCP server startup" << std::endl;
+        int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        check(s, "Socket error");
+        //setsockopt(s, SOL_SOCKET, SO_REUSEADDR, nullptr, 0);
 
-    if (check(listen(s, backLog), "listen error") == -1) {
-        close(s);
-        return -1;
-    }
-    return s;
-}
-
-int raiseUDPServer(sockaddr_in &sa, int backLog) {
-    std::cout << "UDP server startup" << std::endl;
-    int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    check(s, "Socket error");
-
-    if (check(bind(s, (struct sockaddr *) &sa, sizeof sa), "Bind error") == -1) {
-        close(s);
-        return -1;
-    }
-
-    return s;
-}
-
-int raiseTCPClient(sockaddr_in &sa, int backLog) {
-    std::cout << "TCP client startup" << std::endl;
-    int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    check(s, "Socket error");
-    if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
-        close(s);
-        return -1;
-    }
-    return s;
-}
-
-int raiseUDPClient(sockaddr_in &sa, int backLog) {
-    std::cout << "UDP client startup" << std::endl;
-    int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    check(s, "Socket error");
-    if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
-        close(s);
-        return -1;
-    }
-    return s;
-}
-
-int sendMessage(int fd, Message &msg) {
-    ssize_t bytes_sent = send(fd, &msg.length, sizeof(unsigned long), MSG_NOSIGNAL);
-    while (bytes_sent < msg.length) {
-        bytes_sent += send(fd, msg.message.c_str(), msg.length - sizeof(unsigned long), MSG_NOSIGNAL);
-    }
-    //perror("Error sending packet");
-    //return EXIT_FAILURE;
-    //retry_count = 0;
-    // std::cout << bytes_sent << " bytes sent." << std::endl;
-
-    return EXIT_SUCCESS;
-}
-
-Message getMessage(int fd, sockaddr_in *sa) {
-    socklen_t s = sizeof(*sa);
-    Message res{};
-    recvfrom(fd, &res.length, sizeof(unsigned long), 0, (sockaddr *) sa, &s);
-    ssize_t tmp = sizeof(unsigned long);
-    res.message.resize(res.length >= tmp ? res.length - tmp : 0);
-
-    while (tmp < res.length) {
-        tmp += recvfrom(fd, &res.message[0], res.length - tmp, 0, (sockaddr *) sa, &s);
-        if (tmp < 0) {
-            perror("Read failure");
-            exit(EXIT_FAILURE);
+        if (check(bind(s, (struct sockaddr *) &sa, sizeof sa), "Bind error") == -1) {
+            close(s);
+            return -1;
         }
+
+        if (check(listen(s, backLog), "listen error") == -1) {
+            close(s);
+            return -1;
+        }
+        return s;
     }
-    //std::cout << res.length() << std::endl;
-    return res;
+
+    int raise_client(sockaddr_in &sa) {
+        std::cout << "TCP client startup" << std::endl;
+        int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        check(s, "Socket error");
+        if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
+            close(s);
+            return -1;
+        }
+        return s;
+    }
+
+    int send_message(int fd, Message &msg) {
+        ssize_t bytes_sent = 0;
+        while (bytes_sent < *(msg_len_type *) msg.message) {
+            bytes_sent += check((int) send(fd, msg.message, *(msg_len_type *) msg.message, MSG_NOSIGNAL),
+                                "Sending error!");
+        }
+        //perror("Error sending packet");
+        //return EXIT_FAILURE;
+        //retry_count = 0;
+        // std::cout << bytes_sent << " bytes sent." << std::endl;
+
+        return EXIT_SUCCESS;
+    }
+
+    Message get_message(int fd, sockaddr_in *sa) {
+        socklen_t s = sizeof(*sa);
+        Message res{};
+        ssize_t bytes_received = check((int) recv(fd, res.message, sizeof(msg_len_type), 0), "Receive error: ");
+
+        while (bytes_received < *(msg_len_type *) res.message) {
+            bytes_received += recvfrom(fd, res.message + sizeof(msg_len_type), *(msg_len_type *) res.message - 2, 0,
+                                       (sockaddr *) sa, &s);
+            if ((int) bytes_received < 0) {
+                perror("Read failure");
+                exit(EXIT_FAILURE);
+            }
+        }
+        //std::cout << res.length() << std::endl;
+        return res;
+    }
 }
+
+namespace udp {
+    int raise_server(sockaddr_in &sa) {
+        std::cout << "UDP server startup" << std::endl;
+        int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        check(s, "Socket error");
+
+        if (check(bind(s, (struct sockaddr *) &sa, sizeof sa), "Bind error") == -1) {
+            close(s);
+            return -1;
+        }
+        return s;
+    }
+
+    int raise_client(sockaddr_in &sa) {
+        std::cout << "UDP client startup" << std::endl;
+        int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        check(s, "Socket error");
+        if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
+            close(s);
+            return -1;
+        }
+        return s;
+    }
+
+    int send_message(int fd, Message &msg, sockaddr_in *sa) {
+        socklen_t s = sizeof(*sa);
+        ssize_t bytes_sent = check((int) sendto(fd, msg.message, sizeof(msg_len_type), 0,(sockaddr *) sa,  s),
+                                   "Sending error!");
+
+        while (bytes_sent < *(msg_len_type *) msg.message) {
+            bytes_sent += check((int) sendto(fd, msg.message, *(msg_len_type *) msg.message, 0,(sockaddr *) sa,  s),
+                                "Sending error!");
+        }
+        //perror("Error sending packet");
+        //return EXIT_FAILURE;
+        //retry_count = 0;
+        // std::cout << bytes_sent << " bytes sent." << std::endl;
+
+        return EXIT_SUCCESS;
+    }
+
+    Message get_message(int fd, sockaddr_in *sa) {
+        socklen_t s = sizeof(*sa);
+        Message res{};
+        ssize_t bytes_received = check((int) recvfrom(fd, res.message, sizeof(msg_len_type), MSG_PEEK, (sockaddr *) sa, &s),
+                                       "Receive error: ");
+
+        bytes_received = 0;
+
+        while (bytes_received < *(msg_len_type *) res.message) {
+            bytes_received += recvfrom(fd, res.message, *(msg_len_type *) res.message, 0,
+                                       (sockaddr *) sa, &s);
+            if ((int) bytes_received < 0) {
+                perror("Read failure");
+                exit(EXIT_FAILURE);
+            }
+        }
+        return res;
+    }
+}
+
 
 std::vector<int> getNums(const Message &message) {
     std::vector<int> res;
     int sum = 0;
     int tmp = -1;
-    for (char i: message.message) {
-        if (i >= '0' && i <= '9') {
+    for (int i = sizeof(msg_len_type); i < *(msg_len_type *) message.message; i++) {
+        if (message.message[i] >= '0' && message.message[i] <= '9') {
             if (tmp == -1) {
                 tmp = 0;
             }
-            tmp = tmp * 10 + int(i) - '0';
+            tmp = tmp * 10 + int(message.message[i]) - '0';
             // std::cout << i << " = " << tmp << std::endl;
         } else {
             if (tmp != -1) {
@@ -147,7 +208,6 @@ std::vector<int> getNums(const Message &message) {
     if (tmp != -1) {
         res.push_back(tmp);
         sum += tmp;
-        tmp = -1;
     }
     std::sort(res.begin(), res.end());
     if (!res.empty()) {
@@ -169,8 +229,8 @@ std::string processNums(std::vector<int> vec) {
     return res;
 }
 
-void killApp(fd_set *ready_sockets) {
-
-}
+//void killApp(fd_set *ready_sockets) {
+//
+//}
 
 #endif //PROTEI_TEST_MYLIB_H

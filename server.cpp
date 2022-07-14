@@ -2,8 +2,8 @@
 
 bool toClose = false;
 
-void closeHandler(int signo) {
-    std::cout << "Signal " << signo << " received" << std::endl;
+void closeHandler(int sigNo) {
+    std::cout << "Signal " << sigNo << " received" << std::endl;
     fflush(stdout);
     toClose = true;
 }
@@ -26,12 +26,12 @@ int main() {
     saUDP.sin_port = htons(1101);
     saUDP.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    int socketTCP = raiseTCPServer(saTCP, 1);
-    if (check(socketTCP, "Ubable to get TCP socket") == -1) {
+    int socketTCP = tcp::raise_server(saTCP, 1);
+    if (check(socketTCP, "Unable to get TCP socket") == -1) {
         return 1;
     }
-    int socketUDP = raiseUDPServer(saUDP, 1);
-    if (check(socketUDP, "Ubable to get UDP socket") == -1) {
+    int socketUDP = udp::raise_server(saUDP);
+    if (check(socketUDP, "Unable to get UDP socket") == -1) {
         return 1;
     }
 
@@ -78,25 +78,27 @@ int main() {
                     std::cout << "UDP message received" << std::endl;
                     std::cout << "Get message...";
                     fflush(stdout);
-                    Message message = getMessage(i, &saUDP);
+                    Message message = udp::get_message(i, &saUDP);
                     fflush(stdin);
                     std::cout << message << std::endl;
                     std::vector<int> nums = getNums(message);
                     std::cout << nums.size() << std::endl;
                     if (!nums.empty()) {
-                        message.message = processNums(nums);
-                        message.length = message.message.length() + sizeof(unsigned long);
+                        std::string answer = processNums(nums);
+                        memcpy(message.message + sizeof(msg_len_type), answer.c_str(),
+                               strlen(answer.c_str()) + 1);
+                        *(msg_len_type *) message.message =
+                                strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type);
                         std::cout << message << std::endl;
                     }
-                    sendto(i, &message.length, sizeof(unsigned long), 0, (sockaddr *) &saUDP, sizeof saUDP);\
-                    sendto(i, message.message.c_str(), message.length - sizeof(unsigned long), 0, (sockaddr *) &saUDP,
-                           sizeof saUDP);
+                    std::cout << check(
+                            udp::send_message(i, message, &saUDP), "Sending error") << std::endl;
                 } else {
                     std::cout << "Get message...";
                     fflush(stdout);
-                    Message message = getMessage(i, &saTCP);
-                    std::cout << message << " with length " << message.length << std::endl;
-                    if (message.message == "exit") {
+                    Message message = tcp::get_message(i, &saTCP);
+                    std::cout << message << " with length " << *(msg_len_type *) message.message << std::endl;
+                    if (!strcmp(message.message, "exit\n")) {
                         if (shutdown(i, SHUT_RDWR) == -1) {
                             perror("shutdown failed");
                             close(i);
@@ -109,11 +111,14 @@ int main() {
                         std::vector<int> nums = getNums(message);
                         std::cout << nums.size() << std::endl;
                         if (!nums.empty()) {
-                            message.message = processNums(nums);
-                            message.length = message.message.length() + sizeof(unsigned long);
+                            std::string answer = processNums(nums);
+                            memcpy(message.message + sizeof(msg_len_type), answer.c_str(),
+                                   strlen(answer.c_str()) + 1);
+                            *(msg_len_type *) message.message =
+                                    strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type);
                             std::cout << message << std::endl;
                         }
-                        sendMessage(i, message);
+                        tcp::send_message(i, message);
                     }
                 }
             }
