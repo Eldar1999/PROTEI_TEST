@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
         fgets(message.message + sizeof(msg_len_type), 0xffff - sizeof(msg_len_type), stdin);
         message.message[strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type) - 1] = '\0';
         *(msg_len_type *) message.message =
-                strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type);
+                strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type) + 1;
         flag ? tcp::send_message(s, message) : udp::send_message(s, message, &sa);
         if (!strcmp(message.message + 2, "exit")) {
             break;

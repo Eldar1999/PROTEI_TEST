@@ -141,10 +141,6 @@ namespace udp {
         std::cout << "UDP client startup" << std::endl;
         int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         check(s, "Socket error");
-        if (check(connect(s, (struct sockaddr *) &sa, sizeof sa), "connect failed") == -1) {
-            close(s);
-            return -1;
-        }
         return s;
     }
 
