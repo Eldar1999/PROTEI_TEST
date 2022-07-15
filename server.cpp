@@ -79,20 +79,21 @@ int main() {
                     std::cout << "Get message...";
                     fflush(stdout);
                     Message message = udp::get_message(i, &saUDP);
-                    fflush(stdin);
-                    std::cout << message << std::endl;
-                    std::vector<int> nums = getNums(message);
-                    std::cout << nums.size() << std::endl;
-                    if (!nums.empty()) {
-                        std::string answer = processNums(nums);
-                        memcpy(message.message + sizeof(msg_len_type), answer.c_str(),
-                               strlen(answer.c_str()) + 1);
-                        *(msg_len_type *) message.message =
-                                strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type);
+                    if (get_msg_len(&message)) {
                         std::cout << message << std::endl;
+                        std::vector<int> nums = getNums(message);
+                        std::cout << nums.size() << std::endl;
+                        if (!nums.empty()) {
+                            std::string answer = processNums(nums);
+                            memcpy(message.message + sizeof(msg_len_type), answer.c_str(),
+                                   strlen(answer.c_str()) + 1);
+                            *(msg_len_type *) message.message =
+                                    strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type);
+                            std::cout << message << std::endl;
+                        }
+                        std::cout << check(
+                                udp::send_message(i, message, &saUDP), "Sending error") << std::endl;
                     }
-                    std::cout << check(
-                            udp::send_message(i, message, &saUDP), "Sending error") << std::endl;
                 } else {
                     std::cout << "Get message...";
                     fflush(stdout);

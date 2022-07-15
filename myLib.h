@@ -17,12 +17,13 @@
 #include <cerrno>
 
 typedef unsigned short msg_len_type;
+#define get_msg_len(x) (*(msg_len_type *)(x))
 
 struct Message {
     char *message;
 
     Message() {
-        this->message = new char[0xffff];
+        this->message = new char[0xffff - 28];
     }
 
     ~Message() {
@@ -38,7 +39,7 @@ struct Message {
         if (this == &right) {
             return *this;
         }
-        memcpy(this->message, right.message, 0xffff);
+        memcpy(this->message, right.message, 0xffff - 28);
         return *this;
     }
 };
@@ -95,7 +96,7 @@ namespace tcp {
     int send_message(int fd, Message &msg) {
         ssize_t bytes_sent = 0;
         while (bytes_sent < *(msg_len_type *) msg.message) {
-            bytes_sent += check((int) send(fd, msg.message, *(msg_len_type *) msg.message, MSG_NOSIGNAL),
+            bytes_sent += check((int) send(fd, msg.message, get_msg_len(msg.message), MSG_NOSIGNAL),
                                 "Sending error!");
         }
         //perror("Error sending packet");
@@ -112,7 +113,7 @@ namespace tcp {
         ssize_t bytes_received = check((int) recv(fd, res.message, sizeof(msg_len_type), 0), "Receive error: ");
 
         while (bytes_received < *(msg_len_type *) res.message) {
-            bytes_received += recvfrom(fd, res.message + sizeof(msg_len_type), *(msg_len_type *) res.message - 2, 0,
+            bytes_received += recvfrom(fd, res.message + sizeof(msg_len_type), get_msg_len(res.message) - 2, 0,
                                        (sockaddr *) sa, &s);
             if ((int) bytes_received < 0) {
                 perror("Read failure");
@@ -146,11 +147,10 @@ namespace udp {
 
     int send_message(int fd, Message &msg, sockaddr_in *sa) {
         socklen_t s = sizeof(*sa);
-        ssize_t bytes_sent = check((int) sendto(fd, msg.message, sizeof(msg_len_type), 0,(sockaddr *) sa,  s),
-                                   "Sending error!");
+        ssize_t bytes_sent = 0;
 
         while (bytes_sent < *(msg_len_type *) msg.message) {
-            bytes_sent += check((int) sendto(fd, msg.message, *(msg_len_type *) msg.message, 0,(sockaddr *) sa,  s),
+            bytes_sent += check((int) sendto(fd, msg.message, get_msg_len(msg.message), 0, (sockaddr *) sa, s),
                                 "Sending error!");
         }
         //perror("Error sending packet");
@@ -163,19 +163,26 @@ namespace udp {
 
     Message get_message(int fd, sockaddr_in *sa) {
         socklen_t s = sizeof(*sa);
-        Message res{};
-        ssize_t bytes_received = check((int) recvfrom(fd, res.message, sizeof(msg_len_type), MSG_PEEK, (sockaddr *) sa, &s),
-                                       "Receive error: ");
-
-        bytes_received = 0;
-
-        while (bytes_received < *(msg_len_type *) res.message) {
-            bytes_received += recvfrom(fd, res.message, *(msg_len_type *) res.message, 0,
-                                       (sockaddr *) sa, &s);
-            if ((int) bytes_received < 0) {
-                perror("Read failure");
-                exit(EXIT_FAILURE);
+        Message res;
+        get_msg_len(res.message) = 0;
+        ssize_t bytes_received = 0;
+        ssize_t err_flag;
+        while (bytes_received < 0xffff - 28) {
+            err_flag = recvfrom(fd, res.message, 0xffff - 28, MSG_DONTWAIT,
+                                (sockaddr *) sa, &s);
+            bytes_received += err_flag > 0 ? err_flag : 0;
+            if (err_flag == -1) {
+                if (errno == EAGAIN) {
+                    //perror(("Signal " + std::to_string(errno)).c_str());
+                    //std::cout << bytes_received << " bytes received" << std::endl;
+                    //fflush(stdout);
+                    break;
+                } else if (errno != 0) {
+                    perror(("Signal " + std::to_string(errno)).c_str());
+                    exit(EXIT_FAILURE);
+                }
             }
+
         }
         return res;
     }

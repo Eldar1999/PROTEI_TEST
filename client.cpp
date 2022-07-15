@@ -38,7 +38,9 @@ int main(int argc, char **argv) {
         if (!strcmp(message.message + 2, "exit")) {
             break;
         }
-        answer = flag ? tcp::get_message(s, &sa) : udp::get_message(s, &sa);
+        do {
+            answer = flag ? tcp::get_message(s, &sa) : udp::get_message(s, &sa);
+        } while (get_msg_len(answer.message) == 0);
         std::cout << "Answer: " << answer << std::endl;
     }
     std::cout << "Socket closing...";
