@@ -25,23 +25,35 @@ int main(int argc, char **argv) {
     }
     std::cout << "OK" << std::endl;
 
+    struct pollfd fd = {s, POLL_OUT | POLL_IN, 0};
+
+    tcp::user user(s);
+
     while (true) {
-        Message message;
-        Message answer;
-        std::cout << "Enter your message or write 'exit' to exit: ";
+        message msg{};
+        message answ{};
+        std::cout << "Enter your msg or write 'exit' to exit: ";
         fflush(stdout);
-        fgets(message.message + sizeof(msg_len_type), 0xffff - sizeof(msg_len_type), stdin);
-        message.message[strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type) - 1] = '\0';
-        *(msg_len_type *) message.message =
-                strlen(message.message + sizeof(msg_len_type)) + sizeof(msg_len_type) + 1;
-        flag ? tcp::send_message(s, message) : udp::send_message(s, message, &sa);
-        if (!strcmp(message.message + 2, "exit")) {
+        fgets((char *) msg.msg, 0xffff - sizeof(msg_len_type), stdin);
+        msg.msg[strlen((char *) msg.msg) - 1] = '\0';
+        *msg.length = strlen((char *) msg.msg);
+        user.add_to_send(msg);
+        user.try_to_send();
+        if (!strcmp((char *) msg.msg, "exit")) {
             break;
         }
-        do {
-            answer = flag ? tcp::get_message(s, &sa) : udp::get_message(s, &sa);
-        } while (get_msg_len(answer.message) == 0);
-        std::cout << "Answer: " << answer << std::endl;
+        if (poll(&fd, 1, 100)) {
+            if (fd.revents & POLLIN) {
+                if (user.try_to_read() == -1) {
+                    perror("Message reading error!");
+                    close(s);
+                    exit(EXIT_FAILURE);
+                }
+                while (user.to_handle && user.get_message(answ) != -1)
+                    std::cout << "Answer: " << answ << std::endl;
+            }
+        }
+
     }
     std::cout << "Socket closing...";
     if (check(close(s), "Socket closing error!") == -1) {

@@ -8,52 +8,61 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
-#include <vector>
+#include <unordered_map>
 #include <bits/stdc++.h>
 #include <csignal>
 #include <cstdlib>
 #include <cstdio>
 #include <unistd.h>
 #include <cerrno>
+#include <poll.h>
 
-typedef unsigned short msg_len_type;
+typedef size_t msg_len_type;
 #define get_msg_len(x) (*(msg_len_type *)(x))
 
-struct Message {
-    char *message;
+struct message {
+    msg_len_type *length = nullptr;
+    uint8_t *msg;
 
-    Message() {
-        this->message = new char[0xffff - 28];
+    message() {
+        auto tmp = calloc(1, 0xffff - 20);
+        this->length = new(tmp) msg_len_type(0);
+        this->msg = new((uint8_t *) tmp + sizeof(msg_len_type)) uint8_t[0xffff - 20 - sizeof(msg_len_type)]{};
     }
 
-    ~Message() {
-        delete[] this->message;
+    ~message() {
+        free(this->length);
     }
 
-    friend std::ostream &operator<<(std::ostream &os, Message &m);
+    friend std::ostream &operator<<(std::ostream &os, message &m);
 
-//    friend std::istream &operator>>(std::istream &is, Message &m);
+    friend std::istream &operator>>(std::istream &is, message &m);
 
-    Message &operator=(const Message &right) {
+    message &operator=(const message &right) {
 
         if (this == &right) {
             return *this;
         }
-        memcpy(this->message, right.message, 0xffff - 28);
+        this->length = right.length;
+        memcpy(this->msg, right.msg, 0xffff - 28);
         return *this;
+    }
+
+    char *operator+() const {
+        return (char *) this->msg;
     }
 };
 
-std::ostream &operator<<(std::ostream &os, Message &m) {
-    os << (char *) (m.message + sizeof(msg_len_type));
+std::ostream &operator<<(std::ostream &os, message &m) {
+    os << (char *) m.msg;
     return os;
 }
 
-//std::istream &operator>>(std::istream &is, Message &m) {
-//    is >> m.message;
-//    m.length = strlen(m.message) + sizeof(unsigned long);
-//    return is;
-//}
+std::istream &operator>>(std::istream &is, message &m) {
+    is >> (char *) m.msg;
+    *m.length = strlen((char *) m.msg);
+    return is;
+}
 
 int check(int exp, const std::string &msg) {
     if (exp == -1) {
@@ -63,6 +72,304 @@ int check(int exp, const std::string &msg) {
 }
 
 namespace tcp {
+
+    struct user {
+    private:
+        void _calc_read_free_space() {
+            if (this->read_pos <= this->r_append_pos) {
+                this->r_free_space = this->buff_size - this->r_append_pos + this->read_pos;
+            } else {
+                this->r_free_space = this->read_pos - this->r_append_pos;
+            }
+        }
+
+        void _calc_r_payload() {
+            if (this->read_pos <= this->r_append_pos) {
+                this->r_payload = this->r_append_pos - this->read_pos;
+            } else {
+                this->r_payload = this->buff_size - this->read_pos + this->r_append_pos;
+            }
+        }
+
+        void _calc_send_free_space() {
+            if (this->send_pos <= this->s_append_pos) {
+                this->s_free_space = this->buff_size - this->s_append_pos + this->send_pos;
+            } else {
+                this->s_free_space = this->send_pos - this->s_append_pos;
+            }
+        }
+
+        void _calc_s_payload() {
+            if (this->send_pos <= this->s_append_pos) {
+                this->s_payload = this->s_append_pos - this->send_pos;
+            } else {
+                this->s_payload = this->buff_size - this->send_pos + this->s_append_pos;
+            }
+        }
+
+        int _read_buff(void *dest, msg_len_type count) {
+            if (count < 1) {
+                return 0;
+            }
+            if (count > r_payload) {
+                return -1;
+            }
+
+            if (this->read_pos < this->r_append_pos) {
+                memcpy(dest, this->recv_buff + this->read_pos, count);
+                this->read_pos += count;
+            } else {
+                if (this->read_pos + count <= this->buff_size) {
+                    memcpy(dest, this->recv_buff + this->read_pos, count);
+                    this->read_pos += count;
+                } else {
+                    int64_t tmp = this->buff_size - this->read_pos;
+                    memcpy(dest, this->recv_buff + this->read_pos, tmp);
+                    memcpy((uint8_t *) dest + tmp, this->recv_buff, count - tmp);
+                    this->read_pos = count - tmp;
+                }
+            }
+            this->_calc_read_free_space();
+            this->_calc_r_payload();
+            return 0;
+        }
+
+        int _place_buff(uint8_t *to_place, msg_len_type count) {
+            if (count < 1) {
+                return 0;
+            }
+            if (count > s_free_space) {
+                return -1;
+            }
+
+            if (this->send_pos <= this->s_append_pos) {
+                if (this->s_append_pos + count <= buff_size) {
+                    memcpy(this->send_buff + this->s_append_pos, to_place, count);
+                    this->s_append_pos += count;
+                } else {
+                    int64_t tmp = this->buff_size - s_append_pos;
+                    memcpy(this->send_buff + this->s_append_pos, to_place, tmp);
+                    memcpy(this->send_buff, to_place + tmp, count - tmp);
+                    this->s_append_pos = count - tmp;
+                }
+            } else {
+                memcpy(this->send_buff, to_place, count);
+                this->s_append_pos += count;
+            }
+            this->_calc_s_payload();
+            this->_calc_send_free_space();
+            return 0;
+        }
+
+    public:
+        int sock_fd;
+        uint8_t *send_buff, *recv_buff;
+        int64_t s_append_pos = 0, r_append_pos = 0;
+        int64_t read_pos = 0, send_pos = 0;
+        int64_t buff_size = 0x15;
+        int64_t r_free_space = buff_size, s_free_space = buff_size;
+        int64_t r_payload = 0, s_payload = 0;
+
+        bool to_handle = false;
+        bool to_send = false;
+        bool to_close = false;
+
+        explicit user(int sock_fd, int64_t buff_size = 0x15) {
+            this->sock_fd = sock_fd;
+            if (this->sock_fd == -1) {
+                perror("User accepting error!");
+                this->to_close = true;
+            } else {
+                this->buff_size = buff_size;
+                this->send_buff = new uint8_t[this->buff_size];
+                this->recv_buff = new uint8_t[this->buff_size];
+            }
+        }
+
+        user(const user &other) {
+            this->s_append_pos = other.s_append_pos;
+            this->r_append_pos = other.r_append_pos;
+            this->send_pos = other.send_pos;
+            this->read_pos = other.read_pos;
+            this->sock_fd = other.sock_fd;
+            this->to_close = other.to_close;
+            this->to_handle = other.to_handle;
+            this->to_send = other.to_send;
+            this->buff_size = other.buff_size;
+            this->send_buff = new uint8_t[this->buff_size];
+            this->recv_buff = new uint8_t[this->buff_size];
+            std::copy(other.send_buff, other.send_buff + other.buff_size, this->send_buff);
+            std::copy(other.recv_buff, other.recv_buff + other.buff_size, this->recv_buff);
+        }
+
+        ~user() {
+            delete[] this->send_buff;
+            delete[] this->recv_buff;
+        }
+
+        user &operator=(const user &other) {
+            if (this == &other) {
+                return *this;
+            }
+            if (this->buff_size != other.buff_size) {
+                delete[] this->send_buff;
+                delete[] this->recv_buff;
+                this->buff_size = 0;
+                this->send_buff = new uint8_t[other.buff_size];
+                this->recv_buff = new uint8_t[other.buff_size];
+                this->buff_size = other.buff_size;
+            }
+            this->s_append_pos = other.s_append_pos;
+            this->r_append_pos = other.r_append_pos;
+            this->send_pos = other.send_pos;
+            this->read_pos = other.read_pos;
+            this->sock_fd = other.sock_fd;
+            this->to_close = other.to_close;
+            this->to_send = other.to_send;
+            this->to_handle = other.to_handle;
+            std::copy(other.send_buff, other.send_buff + other.buff_size, this->send_buff);
+            std::copy(other.recv_buff, other.recv_buff + other.buff_size, this->recv_buff);
+            return *this;
+        }
+
+        user &operator=(user &&other) noexcept {
+            if (this == &other) {
+                return *this;
+            }
+
+            delete[] this->send_buff;
+            delete[] this->recv_buff;
+
+            this->s_append_pos = std::exchange(other.s_append_pos, 0);
+            this->r_append_pos = std::exchange(other.r_append_pos, 0);
+            this->send_pos = std::exchange(other.send_pos, 0);
+            this->read_pos = std::exchange(other.read_pos, 0);
+            this->sock_fd = std::exchange(other.sock_fd, 0);
+            this->to_close = std::exchange(other.to_close, 0);
+            this->to_send = std::exchange(other.to_send, 0);
+            this->to_handle = std::exchange(other.to_handle, 0);
+            this->send_buff = std::exchange(other.send_buff, nullptr);
+            this->recv_buff = std::exchange(other.recv_buff, nullptr);
+
+            return *this;
+        }
+
+        int try_to_read() {
+            ssize_t res;
+            if (this->read_pos > this->r_append_pos) {
+                res = recv(this->sock_fd, this->recv_buff + this->r_append_pos, this->read_pos - this->r_append_pos,
+                           MSG_DONTWAIT);
+                this->r_append_pos += res;
+            } else if (this->read_pos <= this->r_append_pos) {
+                if (this->read_pos == this->r_append_pos && this->to_handle) {
+                    this->to_close = true;
+                    return -1;
+                }
+                res = recv(this->sock_fd, this->recv_buff + this->r_append_pos,
+                           this->buff_size - this->r_append_pos,
+                           MSG_DONTWAIT);
+                check(res, ("Receive error with user " + std::to_string(this->sock_fd)).c_str());
+                if (this->r_append_pos == this->buff_size - res) {
+                    res = recv(this->sock_fd, this->recv_buff,
+                               this->read_pos,
+                               MSG_DONTWAIT);
+                    check(res, ("Receive error with user " + std::to_string(this->sock_fd)).c_str());
+                    this->r_append_pos = res;
+                } else {
+                    this->r_append_pos += res;
+                }
+            }
+            if (res == -1) {
+                if (errno == EAGAIN) {
+                    return 0;
+                } else {
+                    this->to_close = true;
+                    return -1;
+                }
+            }
+
+            if (res == 0) {
+                to_close = true;
+                return -1;
+            }
+
+            this->to_handle = true;
+            this->_calc_read_free_space();
+            this->_calc_r_payload();
+            return 0;
+        }
+
+        int add_to_send(message &msg) {
+            if (check(this->_place_buff(reinterpret_cast<uint8_t *>(msg.length), sizeof(msg_len_type) + *msg.length),
+                      "User " + std::to_string(this->sock_fd) + " don`t have free space in send buffer!") == -1) {
+                this->to_close = true;
+                return -1;
+            }
+            this->to_send = true;
+            return 0;
+        }
+
+        int try_to_send() {
+            ssize_t res;
+            if (this->send_pos > this->s_append_pos) {
+                res = send(this->sock_fd, this->send_buff + this->send_pos, this->buff_size - this->send_pos,
+                           MSG_DONTWAIT);
+                if (res != -1) {
+                    if (this->send_pos + res < this->buff_size) {
+                        this->send_pos += res;
+                    } else {
+                        res = send(this->sock_fd, this->send_buff,
+                                   this->s_append_pos,
+                                   MSG_DONTWAIT);
+                        this->send_pos = res;
+                    }
+                }
+            } else if (this->send_pos < this->s_append_pos) {
+                res = send(this->sock_fd, this->send_buff + this->send_pos, this->s_append_pos - this->send_pos,
+                           MSG_DONTWAIT);
+                this->send_pos += res;
+            } else {
+                return -1;
+            }
+
+            if (res == -1) {
+                if (errno == EAGAIN) {
+                    return 0;
+                } else {
+                    this->to_close = true;
+                    return -1;
+                }
+            }
+            this->to_send = false;
+            this->_calc_send_free_space();
+            this->_calc_s_payload();
+            return 0;
+        }
+
+        int get_message(message &msg) {
+            if (this->r_payload == 0){
+                this->to_handle = false;
+                return 0;
+            }
+            memset(msg.msg, 0, *msg.length);
+            *msg.length = 0;
+            if (check(this->_read_buff(reinterpret_cast<uint8_t *>(msg.length), sizeof(msg_len_type)),
+                      "User " + std::to_string(this->sock_fd) + " don`t have free space in send buffer!") == -1) {
+                this->to_close = true;
+                return -1;
+            }
+            if (check(this->_read_buff(msg.msg, *msg.length),
+                      "User " + std::to_string(this->sock_fd) + " don`t have free space in send buffer!") == -1) {
+                this->to_close = true;
+                return -1;
+            }
+            if (r_payload == 0) {
+                this->to_handle = false;
+            }
+            return 0;
+        }
+
+    };
 
     int raise_server(sockaddr_in &sa, int backLog) {
         std::cout << "TCP server startup" << std::endl;
@@ -93,36 +400,6 @@ namespace tcp {
         return s;
     }
 
-    int send_message(int fd, Message &msg) {
-        ssize_t bytes_sent = 0;
-        while (bytes_sent < *(msg_len_type *) msg.message) {
-            bytes_sent += check((int) send(fd, msg.message, get_msg_len(msg.message), MSG_NOSIGNAL),
-                                "Sending error!");
-        }
-        //perror("Error sending packet");
-        //return EXIT_FAILURE;
-        //retry_count = 0;
-        // std::cout << bytes_sent << " bytes sent." << std::endl;
-
-        return EXIT_SUCCESS;
-    }
-
-    Message get_message(int fd, sockaddr_in *sa) {
-        socklen_t s = sizeof(*sa);
-        Message res{};
-        ssize_t bytes_received = check((int) recv(fd, res.message, sizeof(msg_len_type), 0), "Receive error: ");
-
-        while (bytes_received < *(msg_len_type *) res.message) {
-            bytes_received += recvfrom(fd, res.message + sizeof(msg_len_type), get_msg_len(res.message) - 2, 0,
-                                       (sockaddr *) sa, &s);
-            if ((int) bytes_received < 0) {
-                perror("Read failure");
-                exit(EXIT_FAILURE);
-            }
-        }
-        //std::cout << res.length() << std::endl;
-        return res;
-    }
 }
 
 namespace udp {
@@ -144,61 +421,19 @@ namespace udp {
         check(s, "Socket error");
         return s;
     }
-
-    int send_message(int fd, Message &msg, sockaddr_in *sa) {
-        socklen_t s = sizeof(*sa);
-        ssize_t bytes_sent = 0;
-
-        while (bytes_sent < *(msg_len_type *) msg.message) {
-            bytes_sent += check((int) sendto(fd, msg.message, get_msg_len(msg.message), 0, (sockaddr *) sa, s),
-                                "Sending error!");
-        }
-        //perror("Error sending packet");
-        //return EXIT_FAILURE;
-        //retry_count = 0;
-        // std::cout << bytes_sent << " bytes sent." << std::endl;
-
-        return EXIT_SUCCESS;
-    }
-
-    Message get_message(int fd, sockaddr_in *sa) {
-        socklen_t s = sizeof(*sa);
-        Message res;
-        get_msg_len(res.message) = 0;
-        ssize_t bytes_received = 0;
-        ssize_t err_flag;
-        while (bytes_received < 0xffff - 28) {
-            err_flag = recvfrom(fd, res.message, 0xffff - 28, MSG_DONTWAIT,
-                                (sockaddr *) sa, &s);
-            bytes_received += err_flag > 0 ? err_flag : 0;
-            if (err_flag == -1) {
-                if (errno == EAGAIN) {
-                    //perror(("Signal " + std::to_string(errno)).c_str());
-                    //std::cout << bytes_received << " bytes received" << std::endl;
-                    //fflush(stdout);
-                    break;
-                } else if (errno != 0) {
-                    perror(("Signal " + std::to_string(errno)).c_str());
-                    exit(EXIT_FAILURE);
-                }
-            }
-
-        }
-        return res;
-    }
 }
 
 
-std::vector<int> getNums(const Message &message) {
+std::vector<int> get_nums(const message &message) {
     std::vector<int> res;
     int sum = 0;
     int tmp = -1;
-    for (int i = sizeof(msg_len_type); i < *(msg_len_type *) message.message; i++) {
-        if (message.message[i] >= '0' && message.message[i] <= '9') {
+    for (msg_len_type i = 0; i < *message.length; i++) {
+        if (message.msg[i] >= '0' && message.msg[i] <= '9') {
             if (tmp == -1) {
                 tmp = 0;
             }
-            tmp = tmp * 10 + int(message.message[i]) - '0';
+            tmp = tmp * 10 + int(message.msg[i]) - '0';
             // std::cout << i << " = " << tmp << std::endl;
         } else {
             if (tmp != -1) {
@@ -219,7 +454,7 @@ std::vector<int> getNums(const Message &message) {
     return res;
 }
 
-std::string processNums(std::vector<int> vec) {
+std::string process_nums(std::vector<int> vec) {
     std::string res;
     if (vec.empty()) {
         return "";
@@ -231,9 +466,5 @@ std::string processNums(std::vector<int> vec) {
     }
     return res;
 }
-
-//void killApp(fd_set *ready_sockets) {
-//
-//}
 
 #endif //PROTEI_TEST_MYLIB_H
