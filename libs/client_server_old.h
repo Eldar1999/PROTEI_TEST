@@ -18,7 +18,6 @@
 #include <poll.h>
 
 typedef size_t msg_len_type;
-#define get_msg_len(x) (*(msg_len_type *)(x))
 
 struct message {
     msg_len_type *length = nullptr;
@@ -75,36 +74,30 @@ namespace tcp {
 
     struct user {
     private:
-        void _calc_read_free_space() {
+        void _calc_read_free_space_and_payload() {
             if (this->read_pos <= this->r_append_pos) {
-                this->r_free_space = this->buff_size - this->r_append_pos + this->read_pos;
+                if (this->read_pos == this->r_append_pos && this->to_handle) {
+                    this->r_free_space = 0;
+                } else {
+                    this->r_free_space = this->buff_size - this->r_append_pos + this->read_pos;
+                }
             } else {
                 this->r_free_space = this->read_pos - this->r_append_pos;
             }
+            this->r_payload = this->buff_size - this->r_free_space;
         }
 
-        void _calc_r_payload() {
-            if (this->read_pos <= this->r_append_pos) {
-                this->r_payload = this->r_append_pos - this->read_pos;
-            } else {
-                this->r_payload = this->buff_size - this->read_pos + this->r_append_pos;
-            }
-        }
-
-        void _calc_send_free_space() {
+        void _calc_send_free_space_and_payload() {
             if (this->send_pos <= this->s_append_pos) {
-                this->s_free_space = this->buff_size - this->s_append_pos + this->send_pos;
+                if (this->send_pos == this->s_append_pos && this->to_send) {
+                    this->s_free_space = 0;
+                } else {
+                    this->s_free_space = this->buff_size - this->s_append_pos + this->send_pos;
+                }
             } else {
                 this->s_free_space = this->send_pos - this->s_append_pos;
             }
-        }
-
-        void _calc_s_payload() {
-            if (this->send_pos <= this->s_append_pos) {
-                this->s_payload = this->s_append_pos - this->send_pos;
-            } else {
-                this->s_payload = this->buff_size - this->send_pos + this->s_append_pos;
-            }
+            this->s_payload = this->buff_size - this->s_free_space;
         }
 
         int _read_buff(void *dest, msg_len_type count) {
@@ -129,8 +122,10 @@ namespace tcp {
                     this->read_pos = count - tmp;
                 }
             }
-            this->_calc_read_free_space();
-            this->_calc_r_payload();
+            if (this->read_pos == this->r_append_pos) {
+                this->to_handle = false;
+            }
+            this->_calc_read_free_space_and_payload();
             return 0;
         }
 
@@ -156,8 +151,8 @@ namespace tcp {
                 memcpy(this->send_buff, to_place, count);
                 this->s_append_pos += count;
             }
-            this->_calc_s_payload();
-            this->_calc_send_free_space();
+            this->to_send = true;
+            this->_calc_send_free_space_and_payload();
             return 0;
         }
 
@@ -256,25 +251,28 @@ namespace tcp {
 
         int try_to_read() {
             ssize_t res;
+            if (r_free_space == 0) {
+                return -1;
+            }
             if (this->read_pos > this->r_append_pos) {
                 res = recv(this->sock_fd, this->recv_buff + this->r_append_pos, this->read_pos - this->r_append_pos,
                            MSG_DONTWAIT);
                 this->r_append_pos += res;
             } else if (this->read_pos <= this->r_append_pos) {
-                if (this->read_pos == this->r_append_pos && this->to_handle) {
-                    this->to_close = true;
-                    return -1;
-                }
+                int64_t tmp = this->buff_size - this->r_append_pos;
                 res = recv(this->sock_fd, this->recv_buff + this->r_append_pos,
-                           this->buff_size - this->r_append_pos,
+                           tmp,
                            MSG_DONTWAIT);
-                check(res, ("Receive error with user " + std::to_string(this->sock_fd)).c_str());
-                if (this->r_append_pos == this->buff_size - res) {
-                    res = recv(this->sock_fd, this->recv_buff,
-                               this->read_pos,
-                               MSG_DONTWAIT);
-                    check(res, ("Receive error with user " + std::to_string(this->sock_fd)).c_str());
-                    this->r_append_pos = res;
+                if (res != -1) {
+                    this->r_append_pos += res;
+                    if (tmp < this->r_free_space && this->r_append_pos == this->buff_size - tmp) {
+                        res = recv(this->sock_fd, this->recv_buff,
+                                   this->read_pos,
+                                   MSG_DONTWAIT);
+                        if (res != -1) {
+                            this->r_append_pos = res;
+                        }
+                    }
                 } else {
                     this->r_append_pos += res;
                 }
@@ -283,7 +281,7 @@ namespace tcp {
                 if (errno == EAGAIN) {
                     return 0;
                 } else {
-                    this->to_close = true;
+                    to_close = true;
                     return -1;
                 }
             }
@@ -294,25 +292,24 @@ namespace tcp {
             }
 
             this->to_handle = true;
-            this->_calc_read_free_space();
-            this->_calc_r_payload();
+            this->_calc_read_free_space_and_payload();
             return 0;
         }
 
         int add_to_send(message &msg) {
-            if (check(this->_place_buff(reinterpret_cast<uint8_t *>(msg.length), sizeof(msg_len_type) + *msg.length),
-                      "User " + std::to_string(this->sock_fd) + " don`t have free space in send buffer!") == -1) {
-                this->to_close = true;
+            if (check(
+                    this->_place_buff(reinterpret_cast<uint8_t *>(msg.length), sizeof(msg_len_type) + *msg.length),
+                    "User " + std::to_string(this->sock_fd) + " don`t have free space in send buffer!") == -1) {
                 return -1;
             }
-            this->to_send = true;
             return 0;
         }
 
         int try_to_send() {
             ssize_t res;
-            if (this->send_pos > this->s_append_pos) {
-                res = send(this->sock_fd, this->send_buff + this->send_pos, this->buff_size - this->send_pos,
+            if (this->send_pos >= this->s_append_pos) {
+                int64_t tmp = this->buff_size - this->send_pos;
+                res = send(this->sock_fd, this->send_buff + this->send_pos, tmp,
                            MSG_DONTWAIT);
                 if (res != -1) {
                     if (this->send_pos + res < this->buff_size) {
@@ -340,14 +337,13 @@ namespace tcp {
                     return -1;
                 }
             }
-            this->to_send = false;
-            this->_calc_send_free_space();
-            this->_calc_s_payload();
+            if (this->send_pos == this->s_append_pos) this->to_send = false;
+            this->_calc_send_free_space_and_payload();
             return 0;
         }
 
         int get_message(message &msg) {
-            if (this->r_payload == 0){
+            if (this->r_payload == 0) {
                 this->to_handle = false;
                 return 0;
             }
@@ -362,9 +358,6 @@ namespace tcp {
                       "User " + std::to_string(this->sock_fd) + " don`t have free space in send buffer!") == -1) {
                 this->to_close = true;
                 return -1;
-            }
-            if (r_payload == 0) {
-                this->to_handle = false;
             }
             return 0;
         }

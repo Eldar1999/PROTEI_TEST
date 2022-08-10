@@ -1,4 +1,4 @@
-#include "myLib.h"
+#include "client_server.h"
 
 #define TCP_PORT 1100
 #define UDP_PORT 1101

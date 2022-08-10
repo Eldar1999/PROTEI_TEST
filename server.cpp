@@ -1,4 +1,4 @@
-#include "myLib.h"
+#include "client_server.h"
 
 #define MAX_CONNECTIONS 200
 
@@ -47,7 +47,7 @@ int main() {
                 if (i == socketUDP) {
                     continue; // for UDP
                 }
-                if (fds[i].revents & POLLIN) {
+                if (fds[i].revents & (POLLIN | POLLOUT)) {
                     if (i == socketTCP) {
                         int s = accept(i, nullptr, nullptr);
                         if (s == -1) {
@@ -63,7 +63,7 @@ int main() {
                     } else {
                         if (users.contains(i)) {
                             auto u = &users.at(i);
-                            if (u->try_to_read() == -1) {
+                            if ((fds[i].events & POLLIN) && u->try_to_read() == -1) {
                                 if (u->to_close) {
                                     perror(("Reading error acquired with user " + std::to_string(u->sock_fd)).c_str());
                                     errno = 0;
@@ -72,11 +72,16 @@ int main() {
                                     fds[u->sock_fd].events = 0;
                                     users.erase(u->sock_fd);
                                     std::cerr << "Done!" << std::endl;
+                                } else if (u->r_free_space == 0 || u->s_free_space == 0) {
+                                    fds[i].events ^= POLLIN;
                                 }
                             }
                             message msg;
                             while (u->to_handle) {
                                 u->get_message(msg);
+                                if (u->r_free_space > 0) {
+                                    fds[i].events |= POLLIN;
+                                }
                                 if (!strcmp((char *) msg.msg, "exit")) {
                                     std::cerr << ("User " + std::to_string(u->sock_fd) + " want do disconnect!").c_str()
                                               << std::endl;
@@ -93,15 +98,26 @@ int main() {
                                     *msg.length = strlen((char *) msg.msg);
                                 }
                                 if (u->add_to_send(msg) == -1) {
-                                    std::cerr << "Error! Sending queue ended." << std::endl;
-                                    std::cerr << "Closing...";
+                                    std::cerr << "Sending queue ended" << std::endl;
                                     fds[u->sock_fd].fd = -1;
                                     fds[u->sock_fd].events = 0;
                                     users.erase(u->sock_fd);
-                                    std::cerr << "Done!" << std::endl;
                                     break;
                                 }
-                                u->try_to_send();
+                                if (u->s_free_space == 0) {
+                                    fds[u->sock_fd].events ^= POLLIN;
+                                }
+                                if (u->try_to_send() == -1) {
+                                    if (u->to_close) {
+                                        perror(("User " + std::to_string(u->sock_fd) +
+                                                ": sending fatal error").c_str());
+                                        fds[u->sock_fd].fd = -1;
+                                        fds[u->sock_fd].events = 0;
+                                        users.erase(u->sock_fd);
+                                    } else {
+                                        fds[u->sock_fd].events |= POLLOUT;
+                                    }
+                                }
                             }
                         }
                     }
