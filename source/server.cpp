@@ -3,8 +3,10 @@
 #define MAX_CONNECTIONS 200
 
 int main() {
-    struct pollfd fds[MAX_CONNECTIONS]{-1, 0, 0};
-    unsigned user;
+    struct pollfd fds[MAX_CONNECTIONS]{};
+    for (int i = 3; i < MAX_CONNECTIONS; ++i){
+        fds[i].fd = -1;
+    }
 
     timeval t{};
     t.tv_sec = 0;
@@ -54,11 +56,11 @@ int main() {
                             perror("Connection accept ERROR!");
                             continue;
                         }
-                        tcp::user new_user(s);
-                        users.insert({new_user.sock_fd, new_user});
-                        fds[new_user.sock_fd].fd = new_user.sock_fd;
-                        fds[new_user.sock_fd].events = POLLIN;
-                        perror(("New User " + std::to_string(new_user.sock_fd) + " connection...").c_str());
+                        users.emplace(s, tcp::user{s});
+                        auto u = &users.at(s);
+                        fds[u->sock_fd].fd = u->sock_fd;
+                        fds[u->sock_fd].events = POLLIN;
+                        perror(("New User " + std::to_string(u->sock_fd) + " connection...").c_str());
                         errno = 0;
                     } else {
                         if (users.contains(i)) {
@@ -72,16 +74,13 @@ int main() {
                                     fds[u->sock_fd].events = 0;
                                     users.erase(u->sock_fd);
                                     std::cerr << "Done!" << std::endl;
-                                } else if (u->r_free_space == 0 || u->s_free_space == 0) {
+                                } else if (u->rec_buf->free_space == 0 || u->snd_buf->free_space == 0) {
                                     fds[i].events ^= POLLIN;
                                 }
                             }
                             message msg;
                             while (u->to_handle) {
                                 u->get_message(msg);
-                                if (u->r_free_space > 0) {
-                                    fds[i].events |= POLLIN;
-                                }
                                 if (!strcmp((char *) msg.msg, "exit")) {
                                     std::cerr << ("User " + std::to_string(u->sock_fd) + " want do disconnect!").c_str()
                                               << std::endl;
@@ -104,9 +103,6 @@ int main() {
                                     users.erase(u->sock_fd);
                                     break;
                                 }
-                                if (u->s_free_space == 0) {
-                                    fds[u->sock_fd].events ^= POLLIN;
-                                }
                                 if (u->try_to_send() == -1) {
                                     if (u->to_close) {
                                         perror(("User " + std::to_string(u->sock_fd) +
@@ -117,6 +113,9 @@ int main() {
                                     } else {
                                         fds[u->sock_fd].events |= POLLOUT;
                                     }
+                                }
+                                if (u->rec_buf->free_space > 0 && u->snd_buf->free_space > 0) {
+                                    fds[i].events |= POLLIN;
                                 }
                             }
                         }

@@ -15,7 +15,7 @@
 #include "message.h"
 #include "circle_queue.h"
 
-#define BUFF_SIZE 0x15
+#define BUFF_SIZE 0xffff
 
 int check(int exp, const std::string &msg) {
     if (exp == -1) {
@@ -31,7 +31,7 @@ namespace tcp {
     struct user {
     public:
         int sock_fd;
-        circle_queue *rec_buf, *snd_buf;
+        circle_queue *rec_buf = nullptr, *snd_buf = nullptr;
 
         bool to_handle = false;
         bool to_send = false;
@@ -46,6 +46,15 @@ namespace tcp {
                 this->rec_buf = new circle_queue(buff_size);
                 this->snd_buf = new circle_queue(buff_size);
             }
+        }
+
+        user(user &&other) noexcept {
+            this->sock_fd = std::exchange(other.sock_fd, -1);
+            this->rec_buf = std::exchange(other.rec_buf, nullptr);
+            this->snd_buf = std::exchange(other.snd_buf, nullptr);
+            this->to_close = std::exchange(other.to_close, false);
+            this->to_send = std::exchange(other.to_send, false);
+            this->to_handle = std::exchange(other.to_handle, false);
         }
 
         ~user() {
@@ -73,13 +82,14 @@ namespace tcp {
                 this->rec_buf->push(res, temp_buff);
                 this->to_handle = true;
             }
+            return 0;
         }
 
         int add_to_send(message &msg) {
             if (this->snd_buf->free_space == 0) {
                 return -1;
             } else {
-                this->snd_buf->push(*msg.length, reinterpret_cast<uint8_t *>(msg.length));
+                this->snd_buf->push(*msg.length + sizeof(msg_len_type), reinterpret_cast<uint8_t *>(msg.length));
                 this->to_send = true;
                 return 0;
             }
@@ -99,18 +109,20 @@ namespace tcp {
                 }
             }
             this->to_send = false;
+            return 0;
         }
 
         int get_message(message &msg) {
-            if (this->rec_buf->payload == 0){
+            if (this->rec_buf->payload == 0) {
                 return -1;
             } else {
                 this->rec_buf->pop(sizeof(msg_len_type), reinterpret_cast<uint8_t *>(msg.length));
                 this->rec_buf->pop(*msg.length, msg.msg);
-                if (this->rec_buf->payload == 0){
+                if (this->rec_buf->payload == 0) {
                     this->to_handle = false;
                 }
             }
+            return 0;
         }
 
     };
@@ -119,16 +131,13 @@ namespace tcp {
         std::cout << "TCP server startup" << std::endl;
         int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         check(s, "Socket error");
-        //setsockopt(s, SOL_SOCKET, SO_REUSEADDR, nullptr, 0);
 
         if (check(bind(s, (struct sockaddr *) &sa, sizeof sa), "Bind error") == -1) {
-            close(s);
-            return -1;
+            exit(EXIT_FAILURE);
         }
 
         if (check(listen(s, backLog), "listen error") == -1) {
-            close(s);
-            return -1;
+            exit(EXIT_FAILURE);
         }
         return s;
     }

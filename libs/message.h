@@ -11,31 +11,34 @@
 typedef size_t msg_len_type;
 
 struct message {
+private:
+    uint8_t *buffer;
+public:
     msg_len_type *length = nullptr;
     uint8_t *msg;
 
     message() {
-        auto tmp = new uint8_t[0xffff - 20];
-        this->length = new(tmp) msg_len_type(0);
-        this->msg = new((uint8_t *) tmp + sizeof(msg_len_type)) uint8_t[0xffff - 20 - sizeof(msg_len_type)]{};
+        this->buffer = new uint8_t[0xffff - 20];
+        this->length = new(this->buffer) msg_len_type(0);
+        this->msg = new(this->buffer + sizeof(msg_len_type)) uint8_t[0xffff - 20 - sizeof(msg_len_type)]{};
     }
 
     message(message &right){
-        auto tmp = new uint8_t[0xffff - 20];
-        this->length = new(tmp) msg_len_type(*right.length);
-        this->msg = new(tmp + sizeof(msg_len_type)) uint8_t[0xffff - 20 - sizeof(msg_len_type)]{};
+        this->buffer = new uint8_t[0xffff - 20];
+        this->length = new(this->buffer) msg_len_type(*right.length);
+        this->msg = new(this->buffer + sizeof(msg_len_type)) uint8_t[0xffff - 20 - sizeof(msg_len_type)]{};
         memcpy(this->msg, right.msg, 0xffff - 28);
     }
 
     message(msg_len_type len, char *str) {
-        auto tmp = new uint8_t[0xffff - 20];
-        this->length = new(tmp) msg_len_type(len);
-        this->msg = new(tmp + sizeof(msg_len_type)) uint8_t[0xffff - 20 - sizeof(msg_len_type)]{};
+        this->buffer = new uint8_t[0xffff - 20];
+        this->length = new(this->buffer) msg_len_type(len);
+        this->msg = new(this->buffer + sizeof(msg_len_type)) uint8_t[0xffff - 20 - sizeof(msg_len_type)]{};
         memcpy(this->msg, str, len);
     }
 
     ~message() {
-        free(this->length);
+        delete[] this->buffer;
     }
 
     friend std::ostream &operator<<(std::ostream &os, message &m);

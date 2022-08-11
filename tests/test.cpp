@@ -4,6 +4,7 @@
 
 #include "circle_queue.h"
 #include "message.h"
+#include "client_server.h"
 
 
 TEST(test, default_constructor_test) {
@@ -173,4 +174,25 @@ TEST(test, message_istream_operator) {
     EXPECT_NO_FATAL_FAILURE(std::istringstream("blablabla") >> m);
     EXPECT_EQ(*m.length, 9);
     EXPECT_EQ(memcmp(m.msg, "blablabla", 9), 0);
+}
+
+TEST(test, tcp_user_create) {
+    tcp::user u(1);
+    EXPECT_EQ(u.snd_buf->buff_size, BUFF_SIZE);
+    EXPECT_EQ(u.rec_buf->buff_size, u.snd_buf->buff_size);
+}
+
+TEST(test, tcp_user_add_to_unordered_map) {
+    std::unordered_map<int, tcp::user> m;
+    m.emplace(5, tcp::user(77, 21));
+    auto u = &m.at(5);
+    EXPECT_EQ(u->sock_fd, 77);
+    EXPECT_EQ(u->snd_buf->buff_size, 21);
+    EXPECT_EQ(u->snd_buf->buff_size, u->rec_buf->buff_size);
+}
+
+
+TEST(test, client_server_err_check_func){
+    EXPECT_EQ(check(-1, "ERROR INITIATE"), -1);
+    EXPECT_EQ(check(0, "NO ERR"), 0);
 }
