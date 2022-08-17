@@ -34,7 +34,10 @@ int main(int argc, char **argv) {
         message answ{};
         std::cout << "Enter your msg or write 'exit' to exit: ";
         fflush(stdout);
-        fgets((char *) msg.msg, 0xffff - sizeof(msg_len_type), stdin);
+        if (nullptr == fgets((char *) msg.msg, 0xffff - sizeof(msg_len_type), stdin)){
+            std::cerr << "Console IN closed or not available. Closing" << std::endl;
+            break;
+        }
         msg.msg[strlen((char *) msg.msg) - 1] = '\0';
         *msg.length = strlen((char *) msg.msg);
         user.add_to_send(msg);

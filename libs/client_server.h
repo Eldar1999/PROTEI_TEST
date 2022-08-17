@@ -14,6 +14,7 @@
 #include <poll.h>
 #include "message.h"
 #include "circle_queue.h"
+#include "message_processing.h"
 
 #define BUFF_SIZE 0xffff
 
@@ -96,9 +97,9 @@ namespace tcp {
         }
 
         int try_to_send() {
-            ssize_t res = this->snd_buf->payload;
+            size_t bytes_to_send = this->snd_buf->payload;
             this->snd_buf->pop(this->snd_buf->payload, temp_buff);
-            res = send(this->sock_fd, temp_buff, res, MSG_DONTWAIT);
+            ssize_t res = send(this->sock_fd, temp_buff, bytes_to_send, MSG_DONTWAIT);
             if (res == -1) {
                 if (errno == EAGAIN) {
                     return 0;
@@ -124,7 +125,6 @@ namespace tcp {
             }
             return 0;
         }
-
     };
 
     int raise_server(sockaddr_in &sa, int backLog) {
@@ -152,7 +152,6 @@ namespace tcp {
         }
         return s;
     }
-
 }
 
 namespace udp {
@@ -174,50 +173,8 @@ namespace udp {
         check(s, "Socket error");
         return s;
     }
-}
 
 
-std::vector<int> get_nums(const message &message) {
-    std::vector<int> res;
-    int sum = 0;
-    int tmp = -1;
-    for (msg_len_type i = 0; i < *message.length; i++) {
-        if (message.msg[i] >= '0' && message.msg[i] <= '9') {
-            if (tmp == -1) {
-                tmp = 0;
-            }
-            tmp = tmp * 10 + int(message.msg[i]) - '0';
-            // std::cout << i << " = " << tmp << std::endl;
-        } else {
-            if (tmp != -1) {
-                res.push_back(tmp);
-                sum += tmp;
-                tmp = -1;
-            }
-        }
-    }
-    if (tmp != -1) {
-        res.push_back(tmp);
-        sum += tmp;
-    }
-    std::sort(res.begin(), res.end());
-    if (!res.empty()) {
-        res.push_back(sum);
-    }
-    return res;
-}
-
-std::string process_nums(std::vector<int> vec) {
-    std::string res;
-    if (vec.empty()) {
-        return "";
-    } else {
-        for (int i = 0; i < vec.size() - 2; i++) {
-            res += std::to_string(vec[i]) + " ";
-        }
-        res += std::to_string(vec[vec.size() - 2]) + "\n" + std::to_string(vec[vec.size() - 1]);
-    }
-    return res;
 }
 
 #endif //PROTEI_TEST_MYLIB_H
