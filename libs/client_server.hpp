@@ -12,9 +12,9 @@
 #include <unistd.h>
 #include <cerrno>
 #include <poll.h>
-#include "message.h"
-#include "circle_queue.h"
-#include "message_processing.h"
+#include "message.hpp"
+#include "circle_queue.hpp"
+#include "message_processing.hpp"
 
 #define BUFF_SIZE 0xffff
 
@@ -29,7 +29,7 @@ thread_local uint8_t temp_buff[0xffff];
 
 namespace tcp {
 
-    struct user {
+    struct tcp_user {
     public:
         int sock_fd;
         circle_queue *rec_buf = nullptr, *snd_buf = nullptr;
@@ -38,7 +38,7 @@ namespace tcp {
         bool to_send = false;
         bool to_close = false;
 
-        explicit user(int sock_fd, int64_t buff_size = BUFF_SIZE) {
+        explicit tcp_user(int sock_fd, int64_t buff_size = BUFF_SIZE) {
             this->sock_fd = sock_fd;
             if (this->sock_fd == -1) {
                 perror("User accepting error!");
@@ -49,7 +49,7 @@ namespace tcp {
             }
         }
 
-        user(user &&other) noexcept {
+        tcp_user(tcp_user &&other) noexcept {
             this->sock_fd = std::exchange(other.sock_fd, -1);
             this->rec_buf = std::exchange(other.rec_buf, nullptr);
             this->snd_buf = std::exchange(other.snd_buf, nullptr);
@@ -58,7 +58,7 @@ namespace tcp {
             this->to_handle = std::exchange(other.to_handle, false);
         }
 
-        ~user() {
+        ~tcp_user() {
             delete this->snd_buf;
             delete this->rec_buf;
         }
@@ -90,7 +90,8 @@ namespace tcp {
             if (this->snd_buf->free_space == 0) {
                 return -1;
             } else {
-                this->snd_buf->push(*msg.length + sizeof(msg_len_type), reinterpret_cast<uint8_t *>(msg.length));
+                this->snd_buf->push(*msg.length + sizeof(msg_len_type) + sizeof(user_id_type) + sizeof(flag_type),
+                                    reinterpret_cast<uint8_t *>(msg.length));
                 this->to_send = true;
                 return 0;
             }
@@ -117,8 +118,9 @@ namespace tcp {
             if (this->rec_buf->payload == 0) {
                 return -1;
             } else {
-                this->rec_buf->pop(sizeof(msg_len_type), reinterpret_cast<uint8_t *>(msg.length));
-                this->rec_buf->pop(*msg.length, msg.msg);
+                this->rec_buf->pop(sizeof(msg_len_type), reinterpret_cast<uint8_t *>(msg.buffer));
+                this->rec_buf->pop(*msg.length + sizeof(user_id_type) + sizeof(flag_type),
+                                   reinterpret_cast<uint8_t *>(msg.buffer + sizeof(msg_len_type)));
                 if (this->rec_buf->payload == 0) {
                     this->to_handle = false;
                 }
@@ -155,6 +157,84 @@ namespace tcp {
 }
 
 namespace udp {
+    struct udp_users_handler {
+    public:
+        int sock_fd;
+        std::queue<std::pair<sockaddr_in, message>> buf{};
+
+        bool to_handle = false;
+        bool to_send = false;
+        bool to_close = false;
+
+        explicit udp_users_handler(int sock_fd) {
+            this->sock_fd = sock_fd;
+            if (this->sock_fd == -1) {
+                perror("User accepting error!");
+                this->to_close = true;
+            }
+        }
+
+        udp_users_handler(udp_users_handler &&other) noexcept {
+            this->sock_fd = std::exchange(other.sock_fd, -1);
+            this->buf = std::exchange(other.buf, this->buf);
+            this->to_close = std::exchange(other.to_close, false);
+            this->to_send = std::exchange(other.to_send, false);
+            this->to_handle = std::exchange(other.to_handle, false);
+        }
+
+        int try_to_read(std::pair<sockaddr_in, message> &msg) {
+            this->to_handle = false;
+            socklen_t in_addr_len = sizeof(sockaddr_in);
+            ssize_t res;
+
+            res = recvfrom(this->sock_fd, msg.second.buffer, 0xffff - 20, MSG_DONTWAIT,
+                           reinterpret_cast<sockaddr *>(&msg.first), &in_addr_len);
+            if (res == -1) {
+                if (errno == EAGAIN) {
+                    return 0;
+                } else {
+                    this->to_close = true;
+                    return -1;
+                }
+            }
+            if (res == 0) {
+                exit(EXIT_FAILURE);
+            }
+            this->to_handle = true;
+            return 0;
+        }
+
+        int try_to_send() {
+            ssize_t res = 1;
+            while (res > 0 && not this->buf.empty()) {
+                res = sendto(this->sock_fd, this->buf.front().second.buffer,
+                             this->buf.front().second.get_msg_size(), MSG_DONTWAIT,
+                             reinterpret_cast<const sockaddr *>(&this->buf.front().first),
+                             sizeof(sockaddr_in));
+                this->buf.pop();
+            }
+
+            if (res == -1) {
+                if (errno == EAGAIN) {
+                    return 0;
+                } else if (errno == ENOBUFS) {
+                    return 1;
+                } else {
+                    return -1;
+                }
+            }
+            this->to_send = false;
+            return 0;
+        }
+
+        int add_to_send(std::pair<sockaddr_in, message> &msg) {
+            this->buf.push(msg);
+            this->to_send = true;
+            return 0;
+        }
+    };
+
+
     int raise_server(sockaddr_in &sa) {
         std::cout << "UDP server startup" << std::endl;
         int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);

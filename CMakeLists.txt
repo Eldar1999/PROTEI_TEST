@@ -4,7 +4,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined 
 project(PROTEI_TEST)
 
 include_directories(libs tests)
-file(GLOB_RECURSE LIBS libs/*.h)
+file(GLOB_RECURSE LIBS libs/*.hpp)
 file(GLOB_RECURSE TESTS tests/*.cpp)
 
 include(tests/CMakeLists.txt)

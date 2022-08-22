@@ -1,10 +1,10 @@
-#include "client_server.h"
+#include "client_server.hpp"
 
 #define MAX_CONNECTIONS 200
 
 int main() {
     struct pollfd fds[MAX_CONNECTIONS]{};
-    for (int i = 3; i < MAX_CONNECTIONS; ++i){
+    for (int i = 3; i < MAX_CONNECTIONS; ++i) {
         fds[i].fd = -1;
     }
 
@@ -34,7 +34,8 @@ int main() {
     fds[socketUDP].fd = socketUDP;
     fds[socketUDP].events = POLLIN;
 
-    std::unordered_map<int, tcp::user> users;
+    std::unordered_map<int, tcp::tcp_user> tcp_users;
+    udp::udp_users_handler u(socketUDP);
 
     for (;;) {
         usleep(1);
@@ -46,25 +47,44 @@ int main() {
             return EXIT_FAILURE;
         } else {
             for (int i = 3; i < MAX_CONNECTIONS; i++) {
-                if (i == socketUDP) {
-                    continue; // for UDP
-                }
                 if (fds[i].revents & (POLLIN | POLLOUT)) {
+                    if (i == socketUDP) {
+                        std::cerr << "UDP datagrams received. Try to handle..." << "\n";
+                        std::pair<sockaddr_in, message> msg{};
+                        if (not u.try_to_read(msg)) {
+                            if (u.to_handle) {
+                                auto tmp = process_nums(get_nums(msg.second));
+                                if (tmp.length() > 0) {
+                                    strcpy((char *) msg.second.msg, tmp.c_str());
+                                    *msg.second.length = strlen((char *) msg.second.msg);
+                                }
+                                u.add_to_send(msg);
+                                if (u.to_send) {
+                                    u.try_to_send();
+                                }
+                            }
+                            std::cerr << "Handling completed" << std::endl;
+                        } else {
+                            perror("Parsing error!");
+                            close(socketUDP);
+                            exit(EXIT_FAILURE);
+                        }
+                    }
                     if (i == socketTCP) {
                         int s = accept(i, nullptr, nullptr);
                         if (s == -1) {
                             perror("Connection accept ERROR!");
                             continue;
                         }
-                        users.emplace(s, tcp::user{s});
-                        auto u = &users.at(s);
+                        tcp_users.emplace(s, tcp::tcp_user{s});
+                        auto u = &tcp_users.at(s);
                         fds[u->sock_fd].fd = u->sock_fd;
                         fds[u->sock_fd].events = POLLIN;
                         perror(("New User " + std::to_string(u->sock_fd) + " connection...").c_str());
                         errno = 0;
                     } else {
-                        if (users.contains(i)) {
-                            auto u = &users.at(i);
+                        if (tcp_users.contains(i)) {
+                            auto u = &tcp_users.at(i);
                             if ((fds[i].events & POLLIN) && u->try_to_read() == -1) {
                                 if (u->to_close) {
                                     perror(("Reading error acquired with user " + std::to_string(u->sock_fd)).c_str());
@@ -72,7 +92,7 @@ int main() {
                                     std::cerr << "Closing...";
                                     fds[u->sock_fd].fd = -1;
                                     fds[u->sock_fd].events = 0;
-                                    users.erase(u->sock_fd);
+                                    tcp_users.erase(u->sock_fd);
                                     std::cerr << "Done!" << std::endl;
                                 } else if (u->rec_buf->free_space == 0 || u->snd_buf->free_space == 0) {
                                     fds[i].events ^= POLLIN;
@@ -87,7 +107,7 @@ int main() {
                                     std::cerr << "Disconnecting user...";
                                     fds[u->sock_fd].fd = -1;
                                     fds[u->sock_fd].events = 0;
-                                    users.erase(u->sock_fd);
+                                    tcp_users.erase(u->sock_fd);
                                     std::cerr << "Done!" << std::endl;
                                     break;
                                 }
@@ -100,7 +120,7 @@ int main() {
                                     std::cerr << "Sending queue ended" << std::endl;
                                     fds[u->sock_fd].fd = -1;
                                     fds[u->sock_fd].events = 0;
-                                    users.erase(u->sock_fd);
+                                    tcp_users.erase(u->sock_fd);
                                     break;
                                 }
                                 if (u->try_to_send() == -1) {
@@ -109,7 +129,7 @@ int main() {
                                                 ": sending fatal error").c_str());
                                         fds[u->sock_fd].fd = -1;
                                         fds[u->sock_fd].events = 0;
-                                        users.erase(u->sock_fd);
+                                        tcp_users.erase(u->sock_fd);
                                     } else {
                                         fds[u->sock_fd].events |= POLLOUT;
                                     }

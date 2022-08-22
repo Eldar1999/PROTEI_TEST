@@ -5,7 +5,7 @@
 #ifndef TEST_STRING_PROCESSING_H
 #define TEST_STRING_PROCESSING_H
 
-#include "message.h"
+#include "message.hpp"
 #include<vector>
 
 std::vector<int> get_nums(const message &message) {

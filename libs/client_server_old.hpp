@@ -19,7 +19,7 @@
 
 typedef size_t msg_len_type;
 
-struct message {
+struct [[deprecated("Old structure")]] message {
     msg_len_type *length = nullptr;
     uint8_t *msg;
 
@@ -70,9 +70,9 @@ int check(int exp, const std::string &msg) {
     return exp;
 }
 
-namespace tcp {
+namespace [[deprecated("Old namespace")]]tcp {
 
-    struct user {
+    struct tcp_user {
     private:
         void _calc_read_free_space_and_payload() {
             if (this->read_pos <= this->r_append_pos) {
@@ -169,7 +169,7 @@ namespace tcp {
         bool to_send = false;
         bool to_close = false;
 
-        explicit user(int sock_fd, int64_t buff_size = 0x15) {
+        explicit tcp_user(int sock_fd, int64_t buff_size = 0x15) {
             this->sock_fd = sock_fd;
             if (this->sock_fd == -1) {
                 perror("User accepting error!");
@@ -181,7 +181,7 @@ namespace tcp {
             }
         }
 
-        user(const user &other) {
+        tcp_user(const tcp_user &other) {
             this->s_append_pos = other.s_append_pos;
             this->r_append_pos = other.r_append_pos;
             this->send_pos = other.send_pos;
@@ -197,12 +197,12 @@ namespace tcp {
             std::copy(other.recv_buff, other.recv_buff + other.buff_size, this->recv_buff);
         }
 
-        ~user() {
+        ~tcp_user() {
             delete[] this->send_buff;
             delete[] this->recv_buff;
         }
 
-        user &operator=(const user &other) {
+        tcp_user &operator=(const tcp_user &other) {
             if (this == &other) {
                 return *this;
             }
@@ -227,7 +227,7 @@ namespace tcp {
             return *this;
         }
 
-        user &operator=(user &&other) noexcept {
+        tcp_user &operator=(tcp_user &&other) noexcept {
             if (this == &other) {
                 return *this;
             }

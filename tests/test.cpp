@@ -2,9 +2,9 @@
 
 #include <string>
 
-#include "circle_queue.h"
-#include "message.h"
-#include "client_server.h"
+#include "circle_queue.hpp"
+#include "message.hpp"
+#include "client_server.hpp"
 
 
 TEST(test, default_constructor_test) {
@@ -139,8 +139,10 @@ TEST(test, message_type_default_constructor) {
 }
 
 TEST(test, message_type_custom_constructor) {
-    message m(7, (char *) "Lazyboy");
+    message m(7, (char *) "Lazyboy", 10, 1);
     EXPECT_EQ(*m.length, 7);
+    EXPECT_EQ(*m.id, 10);
+    EXPECT_EQ(*m.flags, 1);
     EXPECT_EQ(memcmp(m.msg, "Lazyboy", 7), 0);
 }
 
@@ -177,14 +179,14 @@ TEST(test, message_istream_operator) {
 }
 
 TEST(test, tcp_user_create) {
-    tcp::user u(1);
+    tcp::tcp_user u(1);
     EXPECT_EQ(u.snd_buf->buff_size, BUFF_SIZE);
     EXPECT_EQ(u.rec_buf->buff_size, u.snd_buf->buff_size);
 }
 
 TEST(test, tcp_user_add_to_unordered_map) {
-    std::unordered_map<int, tcp::user> m;
-    m.emplace(5, tcp::user(77, 21));
+    std::unordered_map<int, tcp::tcp_user> m;
+    m.emplace(5, tcp::tcp_user(77, 21));
     auto u = &m.at(5);
     EXPECT_EQ(u->sock_fd, 77);
     EXPECT_EQ(u->snd_buf->buff_size, 21);
