@@ -117,7 +117,7 @@ public:
 
     friend std::ostream &operator<<(std::ostream &os, message &m);
 
-    friend std::istream &operator>>(std::istream &is, message &m);
+//    friend std::istream &operator>>(std::istream &is, message &m);
 
     message &operator=(const message &right) {
 
@@ -149,11 +149,11 @@ std::ostream &operator<<(std::ostream &os, message &m) {
     return os;
 }
 
-std::istream &operator>>(std::istream &is, message &m) {
-    is >> (char *) m.msg;
-    *m.length = strlen((char *) m.msg);
-    return is;
-}
+//std::istream &operator>>(std::istream &is, message &m) {
+//    is >> *m.msg;
+//    *m.length = strlen((char *) m.msg);
+//    return is;
+//}
 
 
 #endif //MY_PROJECT_MESSAGE_H

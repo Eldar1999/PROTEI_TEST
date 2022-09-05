@@ -1,7 +1,6 @@
 #ifndef PROTEI_TEST_MYLIB_H
 #define PROTEI_TEST_MYLIB_H
 
-#include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -163,7 +162,6 @@ namespace udp {
         std::queue<std::pair<sockaddr_in, message>> buf{};
 
         bool to_handle = false;
-        bool to_send = false;
         bool to_close = false;
 
         explicit udp_users_handler(int sock_fd) {
@@ -178,7 +176,6 @@ namespace udp {
             this->sock_fd = std::exchange(other.sock_fd, -1);
             this->buf = std::exchange(other.buf, this->buf);
             this->to_close = std::exchange(other.to_close, false);
-            this->to_send = std::exchange(other.to_send, false);
             this->to_handle = std::exchange(other.to_handle, false);
         }
 
@@ -223,13 +220,11 @@ namespace udp {
                     return -1;
                 }
             }
-            this->to_send = false;
             return 0;
         }
 
         int add_to_send(std::pair<sockaddr_in, message> &msg) {
             this->buf.push(msg);
-            this->to_send = true;
             return 0;
         }
     };

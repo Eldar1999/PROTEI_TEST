@@ -51,21 +51,32 @@ int main() {
                     if (i == socketUDP) {
                         std::cerr << "UDP datagrams received. Try to handle..." << "\n";
                         std::pair<sockaddr_in, message> msg{};
-                        if (not u.try_to_read(msg)) {
+                        while (not u.try_to_read(msg)) {
                             if (u.to_handle) {
+                                std::cerr << "\nNew message from: " << inet_ntoa(*reinterpret_cast<in_addr *>(&msg.first))
+                                          << "\n";
+                                std::cerr << "Msg text is: \"" << msg.second << "\"\nNums...";
                                 auto tmp = process_nums(get_nums(msg.second));
                                 if (tmp.length() > 0) {
+                                    std::cerr << "detected!\nNew answer is: ";
                                     strcpy((char *) msg.second.msg, tmp.c_str());
                                     *msg.second.length = strlen((char *) msg.second.msg);
-                                }
+                                    std::cerr << msg.second << "\n";
+                                } else {
+                                    std::cerr << "note detected\nReply message\n";
+                                };
+                                std::cerr << "Adding msg to send...";
                                 u.add_to_send(msg);
-                                if (u.to_send) {
-                                    u.try_to_send();
-                                }
+                                std::cerr << "OK\nSending...";
+                                u.try_to_send();
+                                std::cerr << "DONE!\n\n";
+                            } else {
+                                std::cerr << "Handling completed" << std::endl;
+                                break;
                             }
-                            std::cerr << "Handling completed" << std::endl;
-                        } else {
-                            perror("Parsing error!");
+                        }
+                        if (u.to_close) {
+                            perror("Socket error!");
                             close(socketUDP);
                             exit(EXIT_FAILURE);
                         }

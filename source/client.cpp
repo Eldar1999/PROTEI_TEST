@@ -72,11 +72,11 @@ int main(int argc, char **argv) {
             }
             msg.second.msg[strlen((char *) msg.second.msg) - 1] = '\0';
             *msg.second.length = strlen((char *) msg.second.msg);
-            user.add_to_send(msg);
-            user.try_to_send();
             if (!strcmp((char *) msg.second.msg, "exit")) {
                 break;
             }
+            user.add_to_send(msg);
+            user.try_to_send();
             if (poll(&fd, 1, 100)) {
                 if (fd.revents & POLLIN) {
                     while (not user.try_to_read(answ)) {
